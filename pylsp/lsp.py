@@ -5,6 +5,7 @@
 
 https://github.com/Microsoft/language-server-protocol/blob/master/protocol.md
 """
+from __future__ import annotations
 
 from enum import Enum
 from typing import Optional, TypedDict
