@@ -54,6 +54,7 @@ class PylintConfig(TypedDict):
     enabled: Optional[bool]
     args: Optional[list[str]]
     executable: Optional[str]
+    extra_paths: Optional[list[str]]
 
 
 class PylintLinter:
@@ -218,6 +219,7 @@ def pylsp_settings() -> dict:
     pylint_config: PylintConfig = {
         "enabled": False,
         "args": [],
+        "extra_paths": None,
         # disabled by default as it can slow down the workflow
         "executable": None,
     }
@@ -234,10 +236,13 @@ def pylsp_lint(
         log.debug("Got pylint settings: %s", settings)
         # pylint >= 2.5.0 is required for working through stdin and only
         # available with python3
+        extra_paths = settings["extra_paths"] or []
         if settings.get("executable") and sys.version_info[0] >= 3:
             flag_list = build_args_stdio(settings)
             pylint_executable = settings["executable"] or "pylint"
-            return pylint_lint_stdin(pylint_executable, document, flag_list)
+            return pylint_lint_stdin(
+                pylint_executable, document, flag_list, extra_paths
+            )
         flags = _build_pylint_flags(settings)
         return PylintLinter.lint(document, is_saved, flags=flags)
 
@@ -261,6 +266,7 @@ def pylint_lint_stdin(
     pylint_executable: str,
     document: Document,
     flags: list[str],
+    extra_paths: list[str],
 ) -> list[Diagnostic]:
     """Run pylint linter from stdin.
 
@@ -278,12 +284,12 @@ def pylint_lint_stdin(
     :return: linting diagnostics
     :rtype: list
     """
-    pylint_result = _run_pylint_stdio(pylint_executable, document, flags)
+    pylint_result = _run_pylint_stdio(pylint_executable, document, flags, extra_paths)
     return _parse_pylint_stdio_result(document, pylint_result)
 
 
 def _run_pylint_stdio(
-    pylint_executable: str, document: Document, flags: list[str]
+    pylint_executable: str, document: Document, flags: list[str], extra_paths: list[str]
 ) -> str:
     """Run pylint in popen.
 
@@ -302,14 +308,28 @@ def _run_pylint_stdio(
         cmd = [pylint_executable]
         cmd.extend(flags)
         cmd.extend(["--from-stdin", document.path])
-        p = Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        workspace_root = document._workspace.root_path
+        python_paths = [workspace_root] + [
+            os.path.join(workspace_root, path) for path in extra_paths
+        ]
+        p = Popen(
+            cmd,
+            stdin=PIPE,
+            stdout=PIPE,
+            stderr=PIPE,
+            env={"PYTHONPATH": ":".join(python_paths)},
+        )  # pylint: disable=consider-using-with
     except IOError:
         log.debug("Can't execute %s. Trying with 'python -m pylint'", pylint_executable)
         cmd = [sys.executable, "-m", "pylint"]
         cmd.extend(flags)
         cmd.extend(["--from-stdin", document.path])
         p = Popen(  # pylint: disable=consider-using-with
-            cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE
+            cmd,
+            stdin=PIPE,
+            stdout=PIPE,
+            stderr=PIPE,
+            env={"PYTHONPATH": ":".join(python_paths)},
         )
     (stdout, stderr) = p.communicate(document.source.encode())
     if stderr:
