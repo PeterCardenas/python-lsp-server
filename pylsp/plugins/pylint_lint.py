@@ -10,6 +10,7 @@ import re
 from subprocess import Popen, PIPE
 import os
 import shlex
+from typing import Optional, TypedDict
 
 from pylsp import hookimpl, lsp
 from pylsp.config.config import Config
@@ -45,6 +46,14 @@ UNNECESSITY_CODES = {
     "W0614",  # Unused import %s from wildcard import
     "W1304",  # Unused-format-string-argument
 }
+
+
+class PylintConfig(TypedDict):
+    """Pylint configuration settings."""
+
+    enabled: Optional[bool]
+    args: Optional[list[str]]
+    executable: Optional[str]
 
 
 class PylintLinter:
@@ -193,7 +202,7 @@ class PylintLinter:
         return diagnostics
 
 
-def _build_pylint_flags(settings: dict) -> str:
+def _build_pylint_flags(settings: PylintConfig) -> str:
     """Build arguments for calling pylint."""
     pylint_args = settings.get("args")
     if pylint_args is None:
@@ -203,18 +212,16 @@ def _build_pylint_flags(settings: dict) -> str:
 
 @hookimpl
 def pylsp_settings() -> dict:
+    """Get the default pylint plugin settings."""
     # Default pylint to disabled because it requires a config
     # file to be useful.
-    return {
-        "plugins": {
-            "pylint": {
-                "enabled": False,
-                "args": [],
-                # disabled by default as it can slow down the workflow
-                "executable": None,
-            }
-        }
+    pylint_config: PylintConfig = {
+        "enabled": False,
+        "args": [],
+        # disabled by default as it can slow down the workflow
+        "executable": None,
     }
+    return {"plugins": {"pylint": pylint_config}}
 
 
 @hookimpl
@@ -223,19 +230,19 @@ def pylsp_lint(
 ) -> list[Diagnostic]:
     """Run pylint linter."""
     with workspace.report_progress("lint: pylint"):
-        settings = config.plugin_settings("pylint")
+        settings: PylintConfig = config.plugin_settings("pylint")
         log.debug("Got pylint settings: %s", settings)
         # pylint >= 2.5.0 is required for working through stdin and only
         # available with python3
         if settings.get("executable") and sys.version_info[0] >= 3:
             flag_list = build_args_stdio(settings)
-            pylint_executable = settings.get("executable", "pylint")
+            pylint_executable = settings["executable"] or "pylint"
             return pylint_lint_stdin(pylint_executable, document, flag_list)
         flags = _build_pylint_flags(settings)
         return PylintLinter.lint(document, is_saved, flags=flags)
 
 
-def build_args_stdio(settings: dict) -> list[str]:
+def build_args_stdio(settings: PylintConfig) -> list[str]:
     """Build arguments for calling pylint.
 
     :param settings: client settings
@@ -244,7 +251,7 @@ def build_args_stdio(settings: dict) -> list[str]:
     :return: arguments to path to pylint
     :rtype: list
     """
-    pylint_args = settings.get("args")
+    pylint_args = settings["args"]
     if pylint_args is None:
         return []
     return pylint_args
