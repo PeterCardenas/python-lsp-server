@@ -1,10 +1,13 @@
 # Copyright 2017-2020 Palantir Technologies, Inc.
 # Copyright 2021- Python Language Server Contributors.
 
-"""Some Language Server Protocol constants
+"""Some Language Server Protocol constants.
 
 https://github.com/Microsoft/language-server-protocol/blob/master/protocol.md
 """
+
+from enum import Enum
+from typing import Optional, TypedDict
 
 
 class CompletionItemKind:
@@ -41,14 +44,14 @@ class DocumentHighlightKind:
     Write = 3
 
 
-class DiagnosticSeverity:
+class DiagnosticSeverity(int, Enum):
     Error = 1
     Warning = 2
     Information = 3
     Hint = 4
 
 
-class DiagnosticTag:
+class DiagnosticTag(int, Enum):
     Unnecessary = 1
     Deprecated = 2
 
@@ -113,3 +116,31 @@ class ErrorCodes:
     ContentModified = -32801
     RequestCancelled = -32800
     lspReservedErrorRangeEnd = -32800
+
+
+class Position(TypedDict):
+    """Position in a text document expressed as zero-based line and character offset.
+
+    A position is between two characters like an 'insert' cursor in a editor.
+    Special values like for example (-1,-1) which indicates that the position
+    is invalid.
+    """
+
+    line: int
+    character: int
+
+class Range(TypedDict):
+    """The range type represents a span of text in the document."""
+
+    start: Position
+    end: Position
+
+class Diagnostic(TypedDict):
+    """The type of a diagnostic the lsp should publish."""
+
+    source: str
+    range: Range
+    message: str
+    severity: DiagnosticSeverity
+    code: str
+    tags: list[DiagnosticTag]
