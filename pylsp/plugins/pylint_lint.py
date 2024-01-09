@@ -12,6 +12,9 @@ import os
 import shlex
 
 from pylsp import hookimpl, lsp
+from pylsp.config.config import Config
+from pylsp.workspace import Document, Workspace
+from pylsp.lsp import Diagnostic, Range
 
 try:
     import ujson as json
@@ -45,12 +48,12 @@ UNNECESSITY_CODES = {
 
 
 class PylintLinter:
-    last_diags = collections.defaultdict(list)
+    last_diags: dict[str, list[Diagnostic]] = collections.defaultdict(list)
 
     @classmethod
     def lint(
-        cls, document, is_saved, flags=""
-    ):  # pylint: disable=too-many-locals,too-many-branches
+        cls, document: Document, is_saved: bool, flags=""
+    ) -> list[Diagnostic]:  # pylint: disable=too-many-locals,too-many-branches
         """Plugin interface to pylsp linter.
 
         Args:
@@ -137,12 +140,12 @@ class PylintLinter:
         #  * fatal
         #  * refactor
         #  * warning
-        diagnostics = []
+        diagnostics: list[Diagnostic] = []
         for diag in json.loads(json_out):
             # pylint lines index from 1, pylsp lines index from 0
             line = diag["line"] - 1
 
-            err_range = {
+            err_range: Range = {
                 "start": {
                     "line": line,
                     # Index columns start from 0
@@ -169,14 +172,15 @@ class PylintLinter:
             elif diag["type"] == "warning":
                 severity = lsp.DiagnosticSeverity.Warning
 
-            code = diag["message-id"]
+            code: str = diag["message-id"]
 
-            diagnostic = {
+            diagnostic: Diagnostic = {
                 "source": "pylint",
                 "range": err_range,
                 "message": "[{}] {}".format(diag["symbol"], diag["message"]),
                 "severity": severity,
                 "code": code,
+                "tags": [],
             }
 
             if code in UNNECESSITY_CODES:
@@ -189,7 +193,7 @@ class PylintLinter:
         return diagnostics
 
 
-def _build_pylint_flags(settings):
+def _build_pylint_flags(settings: dict) -> str:
     """Build arguments for calling pylint."""
     pylint_args = settings.get("args")
     if pylint_args is None:
@@ -198,7 +202,7 @@ def _build_pylint_flags(settings):
 
 
 @hookimpl
-def pylsp_settings():
+def pylsp_settings() -> dict:
     # Default pylint to disabled because it requires a config
     # file to be useful.
     return {
@@ -214,7 +218,9 @@ def pylsp_settings():
 
 
 @hookimpl
-def pylsp_lint(config, workspace, document, is_saved):
+def pylsp_lint(
+    config: Config, workspace: Workspace, document: Document, is_saved: bool
+) -> list[Diagnostic]:
     """Run pylint linter."""
     with workspace.report_progress("lint: pylint"):
         settings = config.plugin_settings("pylint")
@@ -222,14 +228,14 @@ def pylsp_lint(config, workspace, document, is_saved):
         # pylint >= 2.5.0 is required for working through stdin and only
         # available with python3
         if settings.get("executable") and sys.version_info[0] >= 3:
-            flags = build_args_stdio(settings)
+            flag_list = build_args_stdio(settings)
             pylint_executable = settings.get("executable", "pylint")
-            return pylint_lint_stdin(pylint_executable, document, flags)
+            return pylint_lint_stdin(pylint_executable, document, flag_list)
         flags = _build_pylint_flags(settings)
         return PylintLinter.lint(document, is_saved, flags=flags)
 
 
-def build_args_stdio(settings):
+def build_args_stdio(settings: dict) -> list[str]:
     """Build arguments for calling pylint.
 
     :param settings: client settings
@@ -244,7 +250,11 @@ def build_args_stdio(settings):
     return pylint_args
 
 
-def pylint_lint_stdin(pylint_executable, document, flags):
+def pylint_lint_stdin(
+    pylint_executable: str,
+    document: Document,
+    flags: list[str],
+) -> list[Diagnostic]:
     """Run pylint linter from stdin.
 
     This runs pylint in a subprocess with popen.
@@ -265,7 +275,9 @@ def pylint_lint_stdin(pylint_executable, document, flags):
     return _parse_pylint_stdio_result(document, pylint_result)
 
 
-def _run_pylint_stdio(pylint_executable, document, flags):
+def _run_pylint_stdio(
+    pylint_executable: str, document: Document, flags: list[str]
+) -> str:
     """Run pylint in popen.
 
     :param pylint_executable: path to pylint executable
@@ -298,7 +310,7 @@ def _run_pylint_stdio(pylint_executable, document, flags):
     return stdout.decode()
 
 
-def _parse_pylint_stdio_result(document, stdout):
+def _parse_pylint_stdio_result(document: Document, stdout: str) -> list[Diagnostic]:
     """Parse pylint results.
 
     :param document: document to run pylint on
@@ -309,7 +321,7 @@ def _parse_pylint_stdio_result(document, stdout):
     :return: linting diagnostics
     :rtype: list
     """
-    diagnostics = []
+    diagnostics: list[Diagnostic] = []
     lines = stdout.splitlines()
     for raw_line in lines:
         parsed_line = re.match(r"(.*):(\d*):(\d*): (\w*): (.*)", raw_line)
@@ -317,12 +329,12 @@ def _parse_pylint_stdio_result(document, stdout):
             log.debug("Pylint output parser can't parse line '%s'", raw_line)
             continue
 
-        parsed_line = parsed_line.groups()
-        if len(parsed_line) != 5:
+        parsed_line_groups = parsed_line.groups()
+        if len(parsed_line_groups) != 5:
             log.debug("Pylint output parser can't parse line '%s'", raw_line)
             continue
 
-        _, line, character, code, msg = parsed_line
+        _, line, character, code, msg = parsed_line_groups
         line = int(line) - 1
         character = int(character)
         severity_map = {
@@ -334,7 +346,7 @@ def _parse_pylint_stdio_result(document, stdout):
             "W": lsp.DiagnosticSeverity.Warning,
         }
         severity = severity_map[code[0]]
-        diagnostic = {
+        diagnostic: Diagnostic = {
             "source": "pylint",
             "code": code,
             "range": {
@@ -347,6 +359,7 @@ def _parse_pylint_stdio_result(document, stdout):
             },
             "message": msg,
             "severity": severity,
+            "tags": [],
         }
         if code in UNNECESSITY_CODES:
             diagnostic["tags"] = [lsp.DiagnosticTag.Unnecessary]
